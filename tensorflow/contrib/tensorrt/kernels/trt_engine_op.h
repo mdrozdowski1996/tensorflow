@@ -19,6 +19,7 @@ limitations under the License.
 #include <memory>
 #include <vector>
 
+#include "tensorflow/contrib/tensorrt/kernels/lru_cache.h"
 #include "tensorflow/contrib/tensorrt/convert/utils.h"
 #include "tensorflow/contrib/tensorrt/log/trt_logger.h"
 #include "tensorflow/contrib/tensorrt/resources/trt_allocator.h"
@@ -82,7 +83,7 @@ class TRTEngineOp : public AsyncOpKernel {
   nvinfer1::IGpuAllocator* GetAllocator(OpKernelContext* ctx);
 
   // map to keep engines and their execution context for given batch size.
-  std::unordered_map<int, EngineCtxPair> engine_map_;
+  //std::unordered_map<int, EngineCtxPair> engine_map_;
   std::vector<string> input_nodes_;
   std::vector<string> output_nodes_;
 
@@ -123,6 +124,10 @@ class TRTEngineOp : public AsyncOpKernel {
 
   // Maximum number of cached engines
   int max_cached_engines_;
+
+  LRUCache<int, EngineCtxPair> lru_cache_;
+  mutex lru_mutex_;
+
 
   int64 workspace_size_;
   mutex engine_mutex_;

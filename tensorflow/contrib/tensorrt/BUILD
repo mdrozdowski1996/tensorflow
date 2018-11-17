@@ -86,6 +86,7 @@ cc_library(
     ],
     hdrs = [
         "kernels/trt_engine_op.h",
+        "kernels/lru_cache.h",
     ],
     copts = tf_copts(),
     visibility = ["//visibility:public"],
