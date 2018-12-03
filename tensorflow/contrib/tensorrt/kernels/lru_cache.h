@@ -77,18 +77,14 @@ private:
 	value_type not_found_value_;
 
 	tensorflow::Status Touch(const key_type& k) {
-		
 		if (!count(k)) {
 			return tensorflow::errors::NotFound("Key not found in cache");
 		}
-        
-        	deque_iterator rank = std::find(keys_.begin(), keys_.end(), k);
-		
-        	if (rank != keys_.begin()) {
+    deque_iterator rank = std::find(keys_.begin(), keys_.end(), k);
+    if (rank != keys_.begin()) {
 			keys_.erase(rank);
 			keys_.push_front(k);
 		}
-		
 		return tensorflow::Status::OK();
 	}
 
