@@ -45,9 +45,13 @@ public:
 		return objects_.at(k);
 	}
 
-  map_iterator begin() {
-    return objects_.begin();
-  }
+	map_iterator begin() {
+		return objects_.begin();
+	}
+
+	map_iterator end() {
+		return objects_.end();
+	}
 
 	template <typename... Args>
 	std::pair<map_iterator, bool> emplace(Args&&... args) {
@@ -56,37 +60,39 @@ public:
 			objects_.emplace(std::forward<Args>(args)...);
 		key_type key = result.first->first;
 
-        if (result.second){
-		    keys_.push_front(key);
-        }
-        else{
-            Touch(key);
-        }
+		if (result.second){
+			keys_.push_front(key);
+		}
+		else{
+			Touch(key);
+		}
 
 		return result;
 	}
 
 private:
-  std::unordered_map<key_type, value_type> objects_;
-  std::deque<key_type> keys_;
+	std::unordered_map<key_type, value_type> objects_;
+	std::deque<key_type> keys_;
 	size_t capacity_;
 	value_type not_found_value_;
 
 	tensorflow::Status Touch(const key_type& k) {
+		
 		if (!count(k)) {
 			return tensorflow::errors::NotFound("Key not found in cache");
 		}
         
-        deque_iterator rank = std::find(keys_.begin(), keys_.end(), k);
+        	deque_iterator rank = std::find(keys_.begin(), keys_.end(), k);
 		
-        if (rank != keys_.begin()) {
+        	if (rank != keys_.begin()) {
 			keys_.erase(rank);
 			keys_.push_front(k);
 		}
+		
 		return tensorflow::Status::OK();
 	}
 
-    //creating n free positions in cache
+	//creating n free positions in cache
 	void DiscardOld(size_t n = 0) {
 		if (n > capacity_) {
 			LOG(ERROR) << "Insufficient capacity in cache";

@@ -274,7 +274,10 @@ void TRTEngineOp::ComputeAsync(OpKernelContext* ctx,
     ExecuteCalibration(ctx, helper);
     return;
   }
+  printf("before GetEngineBatch\n");
   const int smallest_engine = GetEngineBatch(ctx);
+  printf("after GetEngineBatch\n");
+
   if (smallest_engine < 0) {
     LOG(WARNING) << "Failed to get engine batch, running native segment for "
                  << name();
@@ -283,7 +286,11 @@ void TRTEngineOp::ComputeAsync(OpKernelContext* ctx,
   }
 
   const int num_batch = ctx->input(0).shape().dim_size(0);
+  printf("num_batch : %d \n", num_batch);
+  printf("before GetEngine\n");
   auto& engine_ctx_pair = GetEngine(smallest_engine, ctx);
+  printf("after GetEngine\n");
+
   auto& trt_engine_ptr = engine_ctx_pair.first;
   if (!trt_engine_ptr) {
     LOG(WARNING) << "Engine retrieval for batch size " << num_batch
@@ -291,14 +298,18 @@ void TRTEngineOp::ComputeAsync(OpKernelContext* ctx,
     ExecuteNativeSegment(ctx, helper);
     return;
   }
+  printf("before Execute\n");
   const bool retry = ExecuteTrtEngine(ctx, num_batch, trt_engine_ptr.get(),
                                       engine_ctx_pair.second.get());
+  printf("after Execute\n");
   if (retry) {
     LOG(WARNING) << "Failed to execute engine, "
                  << "retrying with native segment for " << name();
     ExecuteNativeSegment(ctx, helper);
     return;
   }
+  printf("number of cache: %d \n", lru_cache_.size());
+  printf("after everything\n");
 }
 
 bool TRTEngineOp::ExecuteTrtEngine(
@@ -424,10 +435,10 @@ TRTEngineOp::~TRTEngineOp() {
   // We need to manually destroy the engine and execution context before
   // the allocator is destructed.
   
-  //for (auto& eng : engine_map_) {
-  //  eng.second.first.reset();
-  // eng.second.second.reset();
-  //}
+  for (auto it = lru_cache_.begin(); it != lru_cache_.end(); it++) {
+    it->second.first.reset();
+    it->second.second.reset();
+  }
   
   allocator_.reset();
 }
