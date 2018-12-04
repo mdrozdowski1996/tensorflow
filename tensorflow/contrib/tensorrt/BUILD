@@ -557,6 +557,23 @@ cuda_py_test(
     ],
 )
 
+cuda_py_test(
+    name = "dynamic_input_shapes_test",
+    srcs = ["test/dynamic_input_shapes_test.py"],
+    additional_deps = [
+        ":tf_trt_integration_test_base",
+        "//tensorflow/python:client_testlib",
+        "//tensorflow/python:framework_test_lib",
+    ],
+    tags = [
+        "no_cuda_on_cpu_tap",
+        #"no_pip",
+        #"no_tap",  # It is not able to download the mnist data.
+        "no_windows",
+        "nomac",
+    ],
+)
+
 cc_library(
     name = "utils",
     srcs = ["convert/utils.cc"],
