@@ -10,7 +10,7 @@
 namespace tensorflow {
 namespace tensorrt {
 
-template <class Key, class Value > class LRUCache{
+template <class Key, class Value> class LRUCache {
 public:
 	typedef Value value_type;
 	typedef Key key_type;
