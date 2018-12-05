@@ -34,6 +34,12 @@ limitations under the License.
 #include "cuda/include/cuda_runtime_api.h"
 #include "tensorrt/include/NvInfer.h"
 
+namespace std {
+  template<> struct hash<std::vector<tensorflow::TensorShape>> {
+    size_t operator()(const std::vector<tensorflow::TensorShape> & x) const;
+  };
+}
+
 namespace tensorflow {
 namespace tensorrt {
 struct TRTInt8Calibrator;
@@ -75,9 +81,11 @@ class TRTEngineOp : public AsyncOpKernel {
   typedef std::pair<TrtUniquePtrType<nvinfer1::ICudaEngine>,
                     TrtUniquePtrType<nvinfer1::IExecutionContext>>
       EngineCtxPair;
+  // TODO(tmorris): make based on shapes
   EngineCtxPair& GetEngine(int batch_size, OpKernelContext* ctx);
 
   // Return engine batch closest to input batch.
+  // TODO(tmorris): rename MatchNextLargestBatchSize
   int GetEngineBatch(OpKernelContext* ctx);
 
   nvinfer1::IGpuAllocator* GetAllocator(OpKernelContext* ctx);
@@ -120,12 +128,15 @@ class TRTEngineOp : public AsyncOpKernel {
   bool fixed_input_size_;
 
   // Batches of the cached engines
+  // TODO(tmorris): change to shapes
+  //std::vector<TensorShape> cached_engine_shapes_;
   std::vector<int> cached_engine_batches_;
+
 
   // Maximum number of cached engines
   int max_cached_engines_;
 
-  LRUCache<int, EngineCtxPair> lru_cache_;
+  LRUCache<std::vector<TensorShape>, EngineCtxPair> lru_cache_;
   mutex lru_mutex_;
 
 
