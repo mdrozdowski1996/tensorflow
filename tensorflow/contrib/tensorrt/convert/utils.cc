@@ -67,23 +67,33 @@ Status GetPrecisionMode(const string& name, int* precision_mode) {
 }
 
 Status SerializeShapesString(
-    const std::vector<tensorflow::TensorShapeProto>& shapes, string* out,
+    const std::vector<tensorflow::TensorShape>& shapes, string* out,
     int max_batch_size) {
   std::ostringstream ss;
   for (int i = 0; i < shapes.size(); i++) {
     if (i != 0) ss << "\n";
-    for (int j = 0; j < shapes[i].dim_size(); j++) {
+    for (int j = 0; j < shapes[i].dims(); j++) {
       if (j != 0) ss << ",";
       // Use max_batch_size for batch dim
       if (max_batch_size != -1 && j == 0) {
         ss << max_batch_size;
       } else {
-        ss << shapes[i].dim(j).size();
+        ss << shapes[i].dim_size(j);
       }
     }
   }
   *out = ss.str();
   return tensorflow::Status::OK();
+}
+
+Status SerializeShapesString(
+    const std::vector<tensorflow::TensorShapeProto>& shapes, string* out,
+    int max_batch_size) {
+  std::vector<TensorShape> tensor_shapes;
+  for (const tensorflow::TensorShapeProto& proto : shapes) {
+    tensor_shapes.emplace_back(proto);
+  }
+  return SerializeShapesString(tensor_shapes, out, max_batch_size);
 }
 
 Status DeserializeShape(const string& shape, TensorShape* out) {

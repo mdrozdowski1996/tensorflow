@@ -49,6 +49,10 @@ Status SerializeShapesString(
     const std::vector<tensorflow::TensorShapeProto>& shapes, string* out,
     int max_batch_size = -1);
 
+Status SerializeShapesString(
+    const std::vector<tensorflow::TensorShape>& shapes, string* out,
+    int max_batch_size = -1);
+
 Status DeserializeShapesString(const string& shapes,
                                std::vector<tensorflow::TensorShape>* out);
 
