@@ -70,7 +70,7 @@ def get_tensorrt_rewriter_config(rewriter_config=None,
                                  minimum_segment_size=3,
                                  is_dynamic_op=False,
                                  maximum_cached_engines=1,
-                                 cached_engine_batch_sizes=None,
+                                 cached_engine_input_shapes=None,
                                  use_calibration=True):
   """Returns a RewriterConfig proto for TRT transformation.
 
@@ -90,12 +90,12 @@ def get_tensorrt_rewriter_config(rewriter_config=None,
       If the number of cached engines is already at max but none of them can
       serve the input, the TRTEngineOp will fall back to run the TF function
       based on which the TRTEngineOp is created.
-    cached_engine_batch_sizes: a list of batch sizes used to create cached
+    cached_engine_input_shapes: a list of input shapes used to create cached
       engines, only used when is_dynamic_op is True. The length of the list
-      should be smaller than maximum_cached_engines, and the dynamic TRT op will
-      use this list to determine the batch sizes of the cached engines, instead
+      should be <= than maximum_cached_engines, and the dynamic TRT op will
+      use this list to determine the input shapes of the cached engines, instead
       of making the decision on the fly. This is useful when we know the most
-      common batch size(s) the application is going to generate.
+      common input shapes(s) the application is going to generate.
     use_calibration: this argument is ignored if precision_mode is not INT8. If
       set to True, a calibration graph will be created to calibrate the missing
       ranges. The calibration graph must be converted to an inference graph
@@ -143,14 +143,20 @@ def get_tensorrt_rewriter_config(rewriter_config=None,
       "max_workspace_size_bytes"].i = max_workspace_size_bytes
   optimizer.parameter_map["precision_mode"].s = _to_bytes(precision_mode)
   optimizer.parameter_map["maximum_cached_engines"].i = maximum_cached_engines
-  if cached_engine_batch_sizes:
-    if not isinstance(cached_engine_batch_sizes, list):
-      raise TypeError("cached_engine_batch_sizes should be a list.")
-    if len(cached_engine_batch_sizes) > maximum_cached_engines:
-      raise ValueError("cached_engine_batch_sizes should not contain more than "
-                       "maximum_cached_engines items.")
-    optimizer.parameter_map["cached_engine_batches"].list.i.extend(
-        cached_engine_batch_sizes)
+  if cached_engine_input_shapes:
+    if not isinstance(cached_engine_input_shapes, list):
+      raise TypeError("cached_engine_input_shapes should be a list of lists.")
+    if len(cached_engine_input_shapes) > maximum_cached_engines:
+      raise ValueError("cached_engine_input_shapes should not contain more than"
+                       " maximum_cached_engines items.")
+    serialized_shapes = []
+    # cached_engine_input_shapes is a list(list(list(int))) or list(list(shape))
+    for inputs in cached_engine_input_shapes:
+      if not isinstance(inputs, list):
+        raise TypeError("cached_engine_input_shapes should be a list of lists.")
+      serialized_shapes.append('\n'.join([','.join(x) for x in inputs]))
+    optimizer.parameter_map["cached_engine_input_shapes"].list.s.extend(
+        serialized_shapes)
   optimizer.parameter_map["use_calibration"].b = use_calibration
   return rewriter_config_with_trt
 
@@ -163,7 +169,7 @@ def create_inference_graph(input_graph_def,
                            minimum_segment_size=3,
                            is_dynamic_op=False,
                            maximum_cached_engines=1,
-                           cached_engine_batch_sizes=None,
+                           cached_engine_input_shapes=None,
                            use_calibration=True,
                            input_saved_model_dir=None,
                            input_saved_model_tags=None,
@@ -190,12 +196,12 @@ def create_inference_graph(input_graph_def,
       If the number of cached engines is already at max but none of them can
       serve the input, the TRTEngineOp will fall back to run the TF function
       based on which the TRTEngineOp is created.
-    cached_engine_batch_sizes: a list of batch sizes used to create cached
+    cached_engine_input_shapes: a list of input shapes used to create cached
       engines, only used when is_dynamic_op is True. The length of the list
-      should be smaller than maximum_cached_engines, and the dynamic TRT op will
-      use this list to determine the batch sizes of the cached engines, instead
+      should be <= than maximum_cached_engines, and the dynamic TRT op will
+      use this list to determine the input shapes of the cached engines, instead
       of making the decision on the fly. This is useful when we know the most
-      common batch size(s) the application is going to generate.
+      common input shapes(s) the application is going to generate.
     use_calibration: this argument is ignored if precision_mode is not INT8. If
       set to True, a calibration graph will be created to calibrate the missing
       ranges. The calibration graph must be converted to an inference graph
@@ -354,7 +360,7 @@ def create_inference_graph(input_graph_def,
   rewriter_config_with_trt = get_tensorrt_rewriter_config(
       rewriter_config, max_batch_size, max_workspace_size_bytes, precision_mode,
       minimum_segment_size, is_dynamic_op, maximum_cached_engines,
-      cached_engine_batch_sizes, use_calibration)
+      cached_engine_input_shapes, use_calibration)
   session_config_with_trt.graph_options.rewrite_options.CopyFrom(
       rewriter_config_with_trt)
 

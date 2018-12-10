@@ -57,7 +57,8 @@ class TrtConvertTest(test_util.TensorFlowTestCase):
         minimum_segment_size=10,
         is_dynamic_op=True,
         maximum_cached_engines=2,
-        cached_engine_batch_sizes=[1, 128])
+        cached_engine_input_shapes=[[[1, 1, 1]],
+                                    [[128, 1, 1]]])
     self.assertEqual(["constfold", "layout", "constfold"],
                      rewriter_cfg.optimizers)
     self.assertEqual(rewriter_config_pb2.RewriterConfig.ONE,

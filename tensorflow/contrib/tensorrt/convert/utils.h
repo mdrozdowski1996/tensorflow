@@ -19,6 +19,7 @@ limitations under the License.
 #include <memory>
 
 #include "tensorflow/core/lib/core/status.h"
+#include "tensorflow/core/framework/tensor_shape.h"
 
 namespace tensorflow {
 namespace tensorrt {
@@ -43,6 +44,13 @@ const int INT8MODE = 2;
 Status GetPrecisionModeName(const int precision_mode, string* name);
 
 Status GetPrecisionMode(const string& name, int* precision_mode);
+
+Status SerializeShapesString(
+    const std::vector<tensorflow::TensorShapeProto>& shapes, string* out,
+    int max_batch_size = -1);
+
+Status DeserializeShapesString(const string& shapes,
+                               std::vector<tensorflow::TensorShape>* out);
 
 }  // namespace tensorrt
 }  // namespace tensorflow

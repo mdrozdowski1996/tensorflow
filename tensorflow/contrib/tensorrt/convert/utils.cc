@@ -17,6 +17,7 @@ limitations under the License.
 
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/core/status.h"
+#include "tensorflow/core/framework/tensor_shape.pb.h"
 
 namespace tensorflow {
 namespace tensorrt {
@@ -63,6 +64,52 @@ Status GetPrecisionMode(const string& name, int* precision_mode) {
                                                name);
   }
   return Status::OK();
+}
+
+Status SerializeShapesString(
+    const std::vector<tensorflow::TensorShapeProto>& shapes, string* out,
+    int max_batch_size) {
+  std::ostringstream ss;
+  for (int i = 0; i < shapes.size(); i++) {
+    if (i != 0) ss << "\n";
+    for (int j = 0; j < shapes[i].dim_size(); j++) {
+      if (j != 0) ss << ",";
+      // Use max_batch_size for batch dim
+      if (max_batch_size != -1 && j == 0) {
+        ss << max_batch_size;
+      } else {
+        ss << shapes[i].dim(j).size();
+      }
+    }
+  }
+  *out = ss.str();
+  return tensorflow::Status::OK();
+}
+
+Status DeserializeShape(const string& shape, TensorShape* out) {
+  std::vector<int> dims;
+  std::stringstream ss(shape);
+  string string_dim;
+  while (std::getline(ss, string_dim, ',')) {
+    dims.push_back(std::stoi(string_dim));
+  }
+  TF_RETURN_IF_ERROR(TensorShapeUtils::MakeShape(dims, out));
+  return tensorflow::Status::OK();
+}
+
+Status DeserializeShapesString(const string& shapes,
+                               std::vector<TensorShape>* out) {
+  out->clear();
+  std::stringstream ss(shapes);
+  std::string serialized_shape;
+  while (std::getline(ss, serialized_shape, '\n')) {
+    TensorShape shape;
+
+    LOG(INFO) << serialized_shape;
+    TF_RETURN_IF_ERROR(DeserializeShape(serialized_shape, &shape));
+    out->push_back(shape);
+  }
+  return tensorflow::Status::OK();
 }
 
 }  // namespace tensorrt

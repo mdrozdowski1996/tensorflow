@@ -581,6 +581,7 @@ cc_library(
     copts = tf_copts(),
     deps = [
         "//tensorflow/core:lib",
+        "//tensorflow/core:framework"
     ],
 )
 
