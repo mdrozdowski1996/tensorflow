@@ -236,7 +236,8 @@ tensorflow::Status ConvertGraphDefToTensorRT(
     const std::vector<string>& output_names, size_t max_batch_size,
     size_t max_workspace_size_bytes, tensorflow::GraphDef* new_graph_def,
     int precision_mode, int minimum_segment_size, bool is_dyn_op,
-    int max_cached_engines, std::vector<int> cached_engine_batches,
+    int max_cached_engines,
+    std::vector<std::vector<TensorShape>> cached_engine_input_shapes,
     bool use_calibration) {
   // Create GrapplerItem.
   tensorflow::grappler::GrapplerItem item;
@@ -298,10 +299,13 @@ tensorflow::Status ConvertGraphDefToTensorRT(
   TF_RETURN_IF_ERROR(GetPrecisionModeName(
       precision_mode, parameters["precision_mode"].mutable_s()));
   parameters["maximum_cached_engines"].set_i(max_cached_engines);
-  if (!cached_engine_batches.empty()) {
-    auto list = parameters["cached_engine_batches"].mutable_list();
-    for (const int batch : cached_engine_batches) {
-      list->add_i(batch);
+  if (!cached_engine_input_shapes.empty()) {
+    auto list = parameters["cached_engine_input_shapes"].mutable_list();
+    for (const std::vector<TensorShape> inputs : cached_engine_input_shapes) {
+      string serialized_input_shapes;
+      TF_RETURN_IF_ERROR(SerializeShapesString(inputs,
+                                               &serialized_input_shapes));
+      list->add_s(serialized_input_shapes);
     }
   }
   parameters["use_calibration"].set_b(use_calibration);
@@ -639,8 +643,18 @@ tensorflow::Status CreateTRTNode(const std::vector<EngineInfo>& infos, int pos,
   }
 
   if (info.engine_type == EngineInfo::EngineType::TRTStatic &&
-      info.cached_engine_batches.size()) {
-    LOG(WARNING) << "Cached engine batches are ignored for static engines";
+      !info.cached_engine_input_shapes.empty()) {
+    LOG(WARNING) << "Cached engine input shapes are ignored for static "
+                 << "engines.";
+  }
+  // Serialize static input shapes for cached_engine_input_shapes
+  std::vector<string> serialized_input_shapes;
+  if (info.engine_type == EngineInfo::EngineType::TRTStatic) {
+    string shapes_string;
+    TF_RETURN_IF_ERROR(SerializeShapesString(input_shape_protos,
+                                             &shapes_string,
+                                             max_batch_size));
+    serialized_input_shapes.push_back(shapes_string);
   }
   tensorflow::NodeDef trt_node;
   tensorflow::Status status =
@@ -653,7 +667,7 @@ tensorflow::Status CreateTRTNode(const std::vector<EngineInfo>& infos, int pos,
           .Attr("serialized_segment", segment_string)
           .Attr("calibration_data", "")
           .Attr("max_cached_engines_count", info.maximum_cached_engines)
-          .Attr("cached_engine_batches", {max_batch_size})
+          .Attr("cached_engine_input_shapes", serialized_input_shapes)
           .Attr("workspace_size_bytes", info.max_workspace_size_bytes)
           .Attr("precision_mode", prec_string)
           .Attr("use_calibration", info.use_calibration)
@@ -934,7 +948,7 @@ tensorflow::Status ConvertAfterShapes(ConversionParams& params) {
                                    ? EngineInfo::EngineType::TRTDynamic
                                    : EngineInfo::EngineType::TRTStatic);
     curr_engine.use_calibration = params.use_calibration;
-    curr_engine.cached_engine_batches = params.cached_engine_batches;
+    curr_engine.cached_engine_input_shapes = params.cached_engine_input_shapes;
     curr_engine.maximum_cached_engines = params.max_cached_engines;
     StrAppend(&curr_engine.engine_name, "TRTEngineOp_", t);
     status = RegisterSegmentFunctionToFunctionLibrary(

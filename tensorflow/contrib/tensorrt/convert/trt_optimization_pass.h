@@ -21,6 +21,7 @@ limitations under the License.
 #include "tensorflow/core/framework/graph.pb.h"
 #include "tensorflow/core/grappler/optimizers/custom_graph_optimizer.h"
 #include "tensorflow/core/platform/logging.h"
+#include "tensorflow/core/framework/tensor_shape.h"
 
 #if GOOGLE_CUDA
 #if GOOGLE_TENSORRT
@@ -65,7 +66,7 @@ class TRTOptimizationPass : public tensorflow::grappler::CustomGraphOptimizer {
   int precision_mode_;
   int maximum_batch_size_;
   bool is_dynamic_op_;
-  std::vector<int> batches_;
+  std::vector<std::vector<tensorflow::TensorShape>> cached_engine_input_shapes_;
   int max_cached_batches_;
   int64_t max_workspace_size_bytes_;
   bool use_calibration_;

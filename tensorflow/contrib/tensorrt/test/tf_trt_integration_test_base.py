@@ -51,7 +51,7 @@ RunParams = namedtuple("RunParams", [
 ConversionParams = namedtuple("ConversionParams", [
     "max_batch_size", "max_workspace_size_bytes", "precision_mode",
     "minimum_segment_size", "is_dynamic_op", "maximum_cached_engines",
-    "cached_engine_batch_sizes", "rewriter_config", "use_calibration"
+    "cached_engine_input_shapes", "rewriter_config", "use_calibration"
 ])
 
 PRECISION_MODES = ["FP32", "FP16", "INT8"]
@@ -168,7 +168,7 @@ class TfTrtIntegrationTestBase(test_util.TensorFlowTestCase):
         minimum_segment_size=2,
         is_dynamic_op=run_params.dynamic_engine,
         maximum_cached_engines=1,
-        cached_engine_batch_sizes=None,
+        cached_engine_input_shapes=None,
         rewriter_config=None,
         use_calibration=run_params.use_calibration)
 
@@ -248,7 +248,7 @@ class TfTrtIntegrationTestBase(test_util.TensorFlowTestCase):
           conversion_params.minimum_segment_size,
           conversion_params.is_dynamic_op,
           conversion_params.maximum_cached_engines,
-          conversion_params.cached_engine_batch_sizes,
+          conversion_params.cached_engine_input_shapes,
           conversion_params.use_calibration)
 
       graph_options = config_pb2.GraphOptions(rewrite_options=rewriter_cfg)
@@ -340,7 +340,7 @@ class TfTrtIntegrationTestBase(test_util.TensorFlowTestCase):
         minimum_segment_size=conversion_params.minimum_segment_size,
         is_dynamic_op=conversion_params.is_dynamic_op,
         maximum_cached_engines=conversion_params.maximum_cached_engines,
-        cached_engine_batch_sizes=conversion_params.cached_engine_batch_sizes,
+        cached_engine_input_shapes=conversion_params.cached_engine_input_shapes,
         use_calibration=conversion_params.use_calibration,
         session_config=config_for_trt)
 

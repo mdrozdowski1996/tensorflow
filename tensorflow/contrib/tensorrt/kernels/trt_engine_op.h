@@ -34,11 +34,16 @@ limitations under the License.
 #include "cuda/include/cuda_runtime_api.h"
 #include "tensorrt/include/NvInfer.h"
 
+// Define a hash function for vector<TensorShape> because it is used as the key
+// for the engine cache.
 namespace std {
   template<> struct hash<std::vector<tensorflow::TensorShape>> {
     size_t operator()(const std::vector<tensorflow::TensorShape> & x) const;
   };
 }
+
+bool operator<(const tensorflow::TensorShape& lhs,
+               const tensorflow::TensorShape& rhs);
 
 namespace tensorflow {
 namespace tensorrt {
@@ -69,7 +74,7 @@ class TRTEngineOp : public AsyncOpKernel {
 
   // Execute the tensorrt engine. Returns whether we need to retry by running
   // the native segment.
-  bool ExecuteTrtEngine(OpKernelContext* ctx, const int num_batch,
+  bool ExecuteTrtEngine(OpKernelContext* ctx, 
                         nvinfer1::ICudaEngine* trt_engine_ptr,
                         nvinfer1::IExecutionContext* trt_execution_context_ptr);
 
@@ -81,12 +86,13 @@ class TRTEngineOp : public AsyncOpKernel {
   typedef std::pair<TrtUniquePtrType<nvinfer1::ICudaEngine>,
                     TrtUniquePtrType<nvinfer1::IExecutionContext>>
       EngineCtxPair;
-  // TODO(tmorris): make based on shapes
-  EngineCtxPair& GetEngine(int batch_size, OpKernelContext* ctx);
+  EngineCtxPair& GetEngine(std::vector<TensorShape> input_shapes,
+                           OpKernelContext* ctx);
 
   // Return engine batch closest to input batch.
-  // TODO(tmorris): rename MatchNextLargestBatchSize
-  int GetEngineBatch(OpKernelContext* ctx);
+  bool GetCompatibleCachedEngine(std::vector<TensorShape> input_shapes,
+                                 std::vector<TensorShape>& matched_shape_out,
+                                 OpKernelContext* ctx);
 
   nvinfer1::IGpuAllocator* GetAllocator(OpKernelContext* ctx);
 
@@ -127,11 +133,8 @@ class TRTEngineOp : public AsyncOpKernel {
   // engine construction.
   bool fixed_input_size_;
 
-  // Batches of the cached engines
-  // TODO(tmorris): change to shapes
-  //std::vector<TensorShape> cached_engine_shapes_;
-  std::vector<int> cached_engine_batches_;
-
+  // Input shape(s) of the cached engines
+  std::vector<std::vector<TensorShape>> cached_engine_input_shapes_;
 
   // Maximum number of cached engines
   int max_cached_engines_;

@@ -37,7 +37,8 @@ limitations under the License.
 #if GOOGLE_TENSORRT
 #include "cuda/include/cuda_runtime_api.h"
 
-size_t std::hash<std::vector<tensorflow::TensorShape>>::operator()(const std::vector<tensorflow::TensorShape> &x) const {
+size_t std::hash<std::vector<tensorflow::TensorShape>>::operator()(
+    const std::vector<tensorflow::TensorShape> &x) const {
   size_t hash = 0;
   for (const tensorflow::TensorShape& shape : x) {
     for (int i : shape.dim_sizes()) {
@@ -45,6 +46,11 @@ size_t std::hash<std::vector<tensorflow::TensorShape>>::operator()(const std::ve
     }
   }
   return hash;
+}
+
+bool operator<(const tensorflow::TensorShape& lhs,
+               const tensorflow::TensorShape& rhs) {
+  return (lhs.dim_sizes() < rhs.dim_sizes());
 }
 
 namespace tensorflow {
@@ -147,17 +153,17 @@ TRTEngineOp::TRTEngineOp(OpKernelConstruction* context)
   native_func_ = tensorflow::kInvalidHandle;
   OP_REQUIRES_OK(context, context->GetAttr("max_cached_engines_count",
                                            &max_cached_engines_));
+  lru_cache_.reserve(max_cached_engines_);
   OP_REQUIRES_OK(context,
                  context->GetAttr("fixed_input_size", &fixed_input_size_));
-  OP_REQUIRES_OK(context, context->GetAttr("cached_engine_batches",
-                                           &cached_engine_batches_));
-  std::sort(cached_engine_batches_.begin(), cached_engine_batches_.end());
-  if (VLOG_IS_ON(1)) {
-    string s("Engine Batches= ");
-    for (auto i : cached_engine_batches_) {
-      StrAppend(&s, i, " ");
-    }
-    VLOG(1) << s;
+  std::vector<string> serialized_input_shapes;
+  OP_REQUIRES_OK(context, context->GetAttr("cached_engine_input_shapes",
+                                           &serialized_input_shapes));
+  cached_engine_input_shapes_.clear();
+  for (const auto str : serialized_input_shapes) {
+    std::vector<TensorShape> input_shapes;
+    OP_REQUIRES_OK(context, DeserializeShapesString(str, &input_shapes));
+    cached_engine_input_shapes_.push_back(input_shapes);
   }
 }
 
@@ -248,32 +254,45 @@ void TRTEngineOp::ExecuteCalibration(OpKernelContext* ctx,
   ExecuteNativeSegment(ctx, helper);
 }
 
-int TRTEngineOp::GetEngineBatch(OpKernelContext* ctx) {
-  int num_batch = ctx->input(0).shape().dim_size(0);
-  int smallest_engine = 0;
-  for (const auto i : cached_engine_batches_) {
-    if (i >= num_batch) {
-      smallest_engine = i;
-      break;
+
+bool AllNonBatchDimsMatch(std::vector<TensorShape> lhs,
+                          std::vector<TensorShape> rhs) {
+  // TODO(tmorris): could use PartialTensorShapeUtils::AreCompatible
+  if (lhs.size() != rhs.size()) return false;
+  for (int i = 0; i < lhs.size(); i++) {
+    if (lhs[i].dims() != rhs[i].dims()) return false;
+    // Start at 1 to skip batch dim.
+    for (int d = 1; d < lhs[i].dims(); d++) {
+      if (lhs[i].dim_size(d) != rhs[i].dim_size(d)) {
+        return false;
+      }
     }
   }
-  // TODO(sami): Need an LRU here
-  if (smallest_engine == 0) {
-    //if (max_cached_engines_ > cached_engine_batches_.size()) {
-    smallest_engine = num_batch;
-    //cached_engine_batches_.push_back(num_batch);
-    //VLOG(1) << "Running with batch size " << num_batch;
-    //} else {
-    //  string msg =
-    //      StrCat("Engine buffer is full. buffer limit=", max_cached_engines_,
-    //             ", current entries=");
-    //  for (auto i : cached_engine_batches_) StrAppend(&msg, i, ",");
-    //  StrAppend(&msg, " requested batch=", num_batch);
-    //  LOG(WARNING) << msg;
-    //  return -1;
-    //}
+  return true;
+}
+
+bool TRTEngineOp::GetCompatibleCachedEngine(
+    std::vector<TensorShape> input_shapes,
+    std::vector<TensorShape>& matched_shape_out,
+    OpKernelContext* ctx) {
+  const int batch_size = input_shapes[0].dim_size(0);
+  bool found_engine = false;
+  for (const auto cached_shapes : cached_engine_input_shapes_) {
+    // Make sure shape is compatible: input shapes aside from batch dim match
+    // exactly and batch <= cached batch.
+    if (AllNonBatchDimsMatch(input_shapes, cached_shapes) &&
+        (batch_size <= cached_shapes[0].dim_size(0))) {
+      if (!found_engine) {
+        // First compatible engine found
+        matched_shape_out = cached_shapes;
+        found_engine = true;
+      } else if (cached_shapes[0].dim_size(0) < matched_shape_out[0].dim_size(0)) {
+        // Smaller batch size engine found
+        matched_shape_out = cached_shapes;
+      }
+    }
   }
-  return smallest_engine;
+  return found_engine;
 }
 
 void TRTEngineOp::ComputeAsync(OpKernelContext* ctx,
@@ -284,50 +303,56 @@ void TRTEngineOp::ComputeAsync(OpKernelContext* ctx,
     ExecuteCalibration(ctx, helper);
     return;
   }
-  // printf("before GetEngineBatch\n");
-  // const int smallest_engine = GetEngineBatch(ctx);
-  // printf("after GetEngineBatch\n");
-
-  // if (smallest_engine < 0) {
-  //   LOG(WARNING) << "Failed to get engine batch, running native segment for "
-  //                << name();
-  //   ExecuteNativeSegment(ctx, helper);
-  //   return;
-  // }
-
-  const int num_batch = ctx->input(0).shape().dim_size(0);
-  // printf("num_batch : %d \n", num_batch);
-  // printf("before GetEngine\n");
-  auto& engine_ctx_pair = GetEngine(num_batch, ctx);
-  printf("after GetEngine\n");
+  // Get shapes of inputs to engine.
+  std::vector<tensorflow::TensorShape> input_shapes;
+  for (int i = 0; i < ctx->num_inputs(); ++i) {
+    input_shapes.emplace_back(ctx->input(i).shape());
+  }
+  // See if there is a compatible engine cached. For an engine to be compatible,
+  // the non-batch dimensions must match exactly and the batch size should be <=
+  // the cached batch size.
+  std::vector<tensorflow::TensorShape> compatible_shapes;
+  bool matched_successfully = GetCompatibleCachedEngine(input_shapes,
+                                                        compatible_shapes,
+                                                        ctx);
+  // If matched, use that engine. Otherwise, we will look in cache for that
+  // exact shape and possibly create a new engine if it is not in cache.
+  if (matched_successfully) {
+    input_shapes = compatible_shapes;
+  } else {
+    // TODO(tmorris): crash when in offline dynamic mode (is_dynamic_op = true
+    // and !cached_engine_input_shapes.empty())
+    LOG(INFO) << "No compatible cached engine found for the given input shape "
+              << "in cached_engine_input_shapes.";
+  }
+  auto& engine_ctx_pair = GetEngine(input_shapes, ctx);
 
   auto& trt_engine_ptr = engine_ctx_pair.first;
   if (!trt_engine_ptr) {
-    LOG(WARNING) << "Engine retrieval for batch size " << num_batch
+    // TODO(tmorris): include shapes
+    LOG(WARNING) << "Engine retrieval for input shapes "
                  << " failed. Running native segment for " << name();
     ExecuteNativeSegment(ctx, helper);
     return;
   }
-  printf("before Execute\n");
-  const bool retry = ExecuteTrtEngine(ctx, num_batch, trt_engine_ptr.get(),
+  const bool retry = ExecuteTrtEngine(ctx, trt_engine_ptr.get(),
                                       engine_ctx_pair.second.get());
-  printf("after Execute\n");
   if (retry) {
     LOG(WARNING) << "Failed to execute engine, "
                  << "retrying with native segment for " << name();
     ExecuteNativeSegment(ctx, helper);
     return;
   }
-  LOG(INFO) << "number of cache: " << lru_cache_.size();
-  LOG(INFO) << "after everything";
 }
 
 bool TRTEngineOp::ExecuteTrtEngine(
-    OpKernelContext* ctx, const int num_batch,
-    nvinfer1::ICudaEngine* trt_engine_ptr,
+    OpKernelContext* ctx, nvinfer1::ICudaEngine* trt_engine_ptr,
     nvinfer1::IExecutionContext* trt_execution_context_ptr) {
   VLOG(1) << "Executing TRT engine: " << name();
   const bool kRetry = true;
+  // All inputs must have the same batch size, so just get it from the first
+  // input.
+  const int num_batch = ctx->input(0).shape().dim_size(0);
   const int num_binding = ctx->num_inputs() + ctx->num_outputs();
   std::vector<void*> buffers(num_binding);
   for (int i = 0; i < ctx->num_inputs(); i++) {
@@ -466,65 +491,64 @@ nvinfer1::IGpuAllocator* TRTEngineOp::GetAllocator(OpKernelContext* ctx) {
   return allocator_.get();
 }
 
-TRTEngineOp::EngineCtxPair& TRTEngineOp::GetEngine(int batch_size,
-                                                   OpKernelContext* ctx) {
+TRTEngineOp::EngineCtxPair& TRTEngineOp::GetEngine(
+    std::vector<TensorShape> input_shapes, OpKernelContext* ctx) {
   static EngineCtxPair null_pair = {
       TrtUniquePtrType<nvinfer1::ICudaEngine>(nullptr),
       TrtUniquePtrType<nvinfer1::IExecutionContext>(nullptr)};
   // TODO(sami): This method needs to be re-written to use resource manager and
   // with LRU mechanism option.
   tensorflow::mutex_lock lock(engine_mutex_);
+  // TODO(tmorris): using first input to get batch size - is this reliable?
+  const int batch_size = input_shapes[0].dim_size(0);
 
+  // Handle the static engine case. For static engines, the cache will have a
+  // single element containing the only engine.
   if (static_engine_) {
-    LOG(ERROR) << "tmorris: staticnot implemented yet.";
-//     if (lru_cache_.size()) {
-//       // TODO(tmorris): using first input to get batch size - is this reliable?
-//       if (lru_cache_.begin()->first[0].dim_size(0) >= batch_size) {
-//         return lru_cache_.begin()->second;
-//       }
-//       return null_pair;
-//     }
+    if (lru_cache_.size()) {
+      // Batch size of engine must be >= the input batch size
+      // TODO(tmorris): use match compatible function? 
+      if (lru_cache_.begin()->first[0].dim_size(0) >= batch_size) {
+        return lru_cache_.begin()->second;
+      }
+      return null_pair;
+    }
   
-//     TrtUniquePtrType<IRuntime> infer(nvinfer1::createInferRuntime(logger));
-// #if NV_TENSORRT_MAJOR > 3
-//     auto allocator = GetAllocator(ctx);
-//     if (allocator == nullptr) {
-//       return null_pair;
-//     }
-//     infer->setGpuAllocator(allocator);
-// #endif
-//     TrtUniquePtrType<nvinfer1::ICudaEngine> static_engine(
-//         infer->deserializeCudaEngine(serialized_segment_.c_str(),
-//                                      serialized_segment_.size(),
-//                                      PluginFactoryTensorRT::GetInstance()));
-//     auto raw_static_engine = static_engine.get();
-//     const auto max_batch_size = raw_static_engine->getMaxBatchSize();
-//     lru_cache_.emplace(max_batch_size, 
-//                        std::make_pair(std::move(static_engine), 
-//                        TrtUniquePtrType<nvinfer1::IExecutionContext>
-//                        (raw_static_engine->createExecutionContext())));
+    TrtUniquePtrType<IRuntime> infer(nvinfer1::createInferRuntime(logger));
+#if NV_TENSORRT_MAJOR > 3
+    auto allocator = GetAllocator(ctx);
+    if (allocator == nullptr) {
+      return null_pair;
+    }
+    infer->setGpuAllocator(allocator);
+#endif
+    TrtUniquePtrType<nvinfer1::ICudaEngine> static_engine(
+        infer->deserializeCudaEngine(serialized_segment_.c_str(),
+                                     serialized_segment_.size(),
+                                     PluginFactoryTensorRT::GetInstance()));
+    auto raw_static_engine = static_engine.get();
+    const auto max_batch_size = raw_static_engine->getMaxBatchSize();
+    for (int i = 0; i < input_shapes.size(); i++) {
+      // TODO(tmorris): will all inputs have batch size as first dimension??
+      input_shapes[i].set_dim(0, max_batch_size);
+    }
+    lru_cache_.emplace(input_shapes, 
+                       std::make_pair(std::move(static_engine), 
+                       TrtUniquePtrType<nvinfer1::IExecutionContext>
+                       (raw_static_engine->createExecutionContext())));
 
 
-//     // Runtime is safe to delete after engine creation
-//     serialized_segment_.clear();
-//     if (max_batch_size < batch_size) {
-//       return null_pair;
-//     }
-//     return lru_cache_.at(max_batch_size);
+    // Runtime is safe to delete after engine creation
+    serialized_segment_.clear();
+    if (max_batch_size < batch_size) {
+      return null_pair;
+    }
+    return lru_cache_.at(input_shapes);
   }  // static_engine_
-  
 
   // Handle the dynamic engine case.
-  // Get input shapes.
-  std::vector<tensorflow::TensorShape> shapes;
-  std::vector<tensorflow::PartialTensorShape> partial_shapes;
-  for (int i = 0; i < ctx->num_inputs(); ++i) {
-    LOG(INFO) << "tmorris: shape " << i << ": " << ctx->input(i).shape().DebugString();
-    shapes.emplace_back(ctx->input(i).shape());
-    partial_shapes.emplace_back(ctx->input(i).shape());
-  }
   tensorflow::Status engine_found_status;
-  lru_cache_.at(shapes, &engine_found_status);
+  lru_cache_.at(input_shapes, &engine_found_status);
 
   if (!engine_found_status.ok()) {
     nvinfer1::IGpuAllocator* allocator = nullptr;
@@ -534,31 +558,28 @@ TRTEngineOp::EngineCtxPair& TRTEngineOp::GetEngine(int batch_size,
       return null_pair;
     }
 #endif
-    // Make string with input shapes
-    string log_string = "[";
-    for (int i = 0; i < ctx->num_inputs(); ++i) {
-      if (i != 0) log_string += ", ";
-      log_string += ctx->input(i).shape().DebugString();
-    }
-    log_string += "]";
-
     TrtUniquePtrType<nvinfer1::ICudaEngine> engine;
     bool convert_successfully = false;
     LOG(INFO) << "Building a new TensorRT engine for " << name()
-              << " with batch size " << batch_size << " and input shapes: "
-              << log_string;
+              << " with and input shapes: "
+              << TensorShapeUtils::ShapeListString(input_shapes);
+    // Convert to partial shapes
+    std::vector<PartialTensorShape> partial_shapes;
+    for(int i = 0; i < input_shapes.size(); i++) {
+      partial_shapes.emplace_back(input_shapes[i]);
+    }
     // Up to this point, calibrator_ can never be empty, since otherwise it
     // means calibration_mode_ is true and this path won't get executed.
     auto status = convert::ConvertGraphDefToEngine(
-        segment_graph_, precision_mode_, batch_size, workspace_size_, partial_shapes,
-        &logger, allocator, calibrator_.get(), &engine, use_calibration_,
-        &convert_successfully);
+        segment_graph_, precision_mode_, batch_size, workspace_size_,
+        partial_shapes, &logger, allocator, calibrator_.get(), &engine,
+        use_calibration_, &convert_successfully);
     if (!status.ok()) {
       if (convert_successfully) {
         // This means it fail to build the engine even when the network is built
         // successfully, probably due to internal issues. In this case we don't
         // retry in the future.
-        lru_cache_.emplace(shapes, std::make_pair(nullptr, nullptr));
+        lru_cache_.emplace(input_shapes, std::make_pair(nullptr, nullptr));
       }
       LOG(WARNING) << "Engine creation for batch size " << batch_size
                    << " failed " << status;
@@ -567,9 +588,10 @@ TRTEngineOp::EngineCtxPair& TRTEngineOp::GetEngine(int batch_size,
     VLOG(1) << "Conversion is done";
     TrtUniquePtrType<nvinfer1::IExecutionContext> exec_context(
         engine->createExecutionContext());
-    lru_cache_.emplace(shapes, std::make_pair(std::move(engine), std::move(exec_context)));
+    lru_cache_.emplace(input_shapes,
+        std::make_pair(std::move(engine), std::move(exec_context)));
   }
-  return lru_cache_.at(shapes);
+  return lru_cache_.at(input_shapes);
 }
 
 tensorflow::Status TRTEngineOp::AllocateCalibrationResources(
