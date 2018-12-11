@@ -492,6 +492,8 @@ cuda_py_tests(
         "test/binary_tensor_weight_broadcast_test.py",
         "test/concatenation_test.py",
         "test/const_broadcast_test.py",
+        "test/dynamic_input_shapes_test.py",
+        "test/lru_cache_test.py",
         "test/manual_test.py",
         "test/memory_alignment_test.py",
         "test/multi_connection_neighbor_engine_test.py",
@@ -552,23 +554,6 @@ cuda_py_test(
         "no_cuda_on_cpu_tap",
         "no_pip",
         "no_tap",  # It is not able to download the mnist data.
-        "no_windows",
-        "nomac",
-    ],
-)
-
-cuda_py_test(
-    name = "dynamic_input_shapes_test",
-    srcs = ["test/dynamic_input_shapes_test.py"],
-    additional_deps = [
-        ":tf_trt_integration_test_base",
-        "//tensorflow/python:client_testlib",
-        "//tensorflow/python:framework_test_lib",
-    ],
-    tags = [
-        "no_cuda_on_cpu_tap",
-        #"no_pip",
-        #"no_tap",  # It is not able to download the mnist data.
         "no_windows",
         "nomac",
     ],

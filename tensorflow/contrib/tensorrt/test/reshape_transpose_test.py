@@ -74,7 +74,7 @@ class ReshapeTest(trt_test.TfTrtIntegrationTestBase):
         input_names=[input_name],
         input_dims=[[input_dims]],
         output_names=[output_name],
-        expected_output_dims=[tuple(input_dims)])
+        expected_output_dims=[[tuple(input_dims)]])
 
   def ExpectedEnginesToBuild(self, run_params):
     """Return the expected engines to build."""

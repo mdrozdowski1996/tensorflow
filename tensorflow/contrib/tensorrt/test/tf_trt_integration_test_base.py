@@ -161,7 +161,7 @@ class TfTrtIntegrationTestBase(test_util.TensorFlowTestCase):
     """Return a ConversionParams for test."""
     return ConversionParams(
         max_batch_size=max([
-            (dims[0] for dims in inp) for inp in self._GetParamsCached().input_dims if len(inp)
+            dims[0] for inp in self._GetParamsCached().input_dims if len(inp) for dims in inp
         ]),
         max_workspace_size_bytes=1 << 25,
         precision_mode=run_params.precision_mode,
@@ -286,8 +286,8 @@ class TfTrtIntegrationTestBase(test_util.TensorFlowTestCase):
                 num_runs=2):
     """Run given graphdef multiple times."""
     params = self._GetParamsCached()
-		for current_input_data in inputs_data:
-		  assert len(params.input_names) == len(current_input_data)
+    for current_input_data in inputs_data:
+      assert len(params.input_names) == len(current_input_data)
 
     g = ops.Graph()
     with g.as_default():
@@ -305,7 +305,7 @@ class TfTrtIntegrationTestBase(test_util.TensorFlowTestCase):
         for ind in range(len(inputs_data)):
           val = None
         # Defaults to 2 runs to verify result across multiple runs is same.
-			  for _ in range(num_runs):
+        for _ in range(num_runs):
           self._PrepareRun(graph_state)
           new_val = sess.run(
               outputs, {inputs[i]: inputs_data[ind][i] for i in range(len(inputs))})
@@ -318,7 +318,7 @@ class TfTrtIntegrationTestBase(test_util.TensorFlowTestCase):
             self.assertAllClose(val, new_val, atol=1.e-06, rtol=1.e-06)
           val = new_val
           self.VerifyRun(run_params, graph_state)
-				
+        
       vals.append(val)
     
     return vals
@@ -484,14 +484,14 @@ class TfTrtIntegrationTestBase(test_util.TensorFlowTestCase):
     assert len(params.input_names) == len(input_dtypes)
 
     inputs_data = []
-		for inp in params.input_dims:
-		  current_input_data = []
+    for inp in params.input_dims:
+      current_input_data = []
       for i in range(len(params.input_names)):
         dtype = input_dtypes[params.input_names[i]]
         # Multiply the input by some constant to avoid all zeros input for integer
         # types.
         scale = 10.0 if np.issubdtype(dtype, np.integer) else 1.0
-        dims = params.inp[i]
+        dims = inp[i]
         # TODO(laigd): add debug options. E.g. we can set the input data to be
         # continuous natural numbers:
         # seq = np.arange(np.prod(dims))
@@ -500,13 +500,13 @@ class TfTrtIntegrationTestBase(test_util.TensorFlowTestCase):
         current_input_data.append((scale * np.random.random_sample(dims)).astype(dtype))
       inputs_data.append(current_input_data)
 
-		self._VerifyGraphDef(run_params, input_gdef, GraphState.ORIGINAL)
+    self._VerifyGraphDef(run_params, input_gdef, GraphState.ORIGINAL)
 
     # Get reference result without running trt.
     config_no_trt = self._GetConfigProto(run_params, GraphState.ORIGINAL)
     logging.info("Running original graph w/o trt, config:\n%s",
                  str(config_no_trt))
-    ref_result = self._RunGraph(run_params, input_gdef, all_inputs_data,
+    ref_result = self._RunGraph(run_params, input_gdef, inputs_data,
                                 config_no_trt, GraphState.ORIGINAL)
 
     # Run calibration if necessary.
@@ -516,12 +516,12 @@ class TfTrtIntegrationTestBase(test_util.TensorFlowTestCase):
       calib_config = self._GetConfigProto(run_params, GraphState.CALIBRATE)
       logging.info("Running calibration graph, config:\n%s", str(calib_config))
       if run_params.use_optimizer:
-        result = self._RunCalibration(run_params, input_gdef, all_inputs_data,
+        result = self._RunCalibration(run_params, input_gdef, inputs_data,
                                       calib_config)
       else:
         calib_gdef = self._GetTrtGraphDef(run_params, input_gdef)
         self._VerifyGraphDef(run_params, calib_gdef, GraphState.CALIBRATE)
-        result = self._RunCalibration(run_params, calib_gdef, all_inputs_data,
+        result = self._RunCalibration(run_params, calib_gdef, inputs_data,
                                       calib_config)
       infer_gdef = trt_convert.calib_graph_to_infer_graph(
           calib_gdef, run_params.dynamic_engine)

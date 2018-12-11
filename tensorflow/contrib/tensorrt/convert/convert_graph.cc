@@ -660,10 +660,12 @@ tensorflow::Status CreateTRTNode(const std::vector<EngineInfo>& infos, int pos,
   // Serialize static input shapes for cached_engine_input_shapes
   std::vector<string> serialized_input_shapes;
   if (info.engine_type == EngineInfo::EngineType::TRTStatic) {
+    LOG(INFO) << "here maxbs: " << max_batch_size;
     string shapes_string;
     TF_RETURN_IF_ERROR(SerializeShapesString(input_shape_protos,
                                              &shapes_string,
                                              max_batch_size));
+    LOG(INFO) << "here out: " << shapes_string;
     serialized_input_shapes.push_back(shapes_string);
   }
   tensorflow::NodeDef trt_node;

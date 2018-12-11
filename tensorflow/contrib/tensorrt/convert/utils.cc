@@ -90,7 +90,12 @@ Status SerializeShapesString(
     const std::vector<tensorflow::TensorShapeProto>& shapes, string* out,
     int max_batch_size) {
   std::vector<TensorShape> tensor_shapes;
-  for (const tensorflow::TensorShapeProto& proto : shapes) {
+  for (tensorflow::TensorShapeProto proto : shapes) {
+    // Use max_batch_size for batch dim (shape must be fully defined for
+    // TensorShape - but not necessarily for TensorShapeProto)
+    if (max_batch_size != -1) {
+      proto.mutable_dim(0)->set_size(max_batch_size);
+    }
     tensor_shapes.emplace_back(proto);
   }
   return SerializeShapesString(tensor_shapes, out, max_batch_size);
