@@ -3812,33 +3812,46 @@ void TestConvertGather(OpConverterTest* test) {
 
   // Ok.
   for (int i = 0; i < kGatherOKCases; i++) {
-    test->Reset();
-    test->AddTestTensor("params", ok_params[i].params_dims, 1,
-                        TfDataTypeToTrt(dtype));
-    test->AddTestTensor("indices", ok_params[i].indices_dims, 1,
-                        nvinfer1::DataType::kINT32);
-    test->AddTestWeights<int32>("axis", {1}, {ok_params[i].axis});
-    test->RunValidationAndConversion(node_def);
-    TRT_TensorOrWeights output;
-    TF_EXPECT_OK(test->GetTensorOrWeights("my_gather", &output));
-    ASSERT_TRUE(output.is_tensor());
-    ExpectTrtDimsEqualsArray(ok_params[i].expected_output_dims,
-                             output.tensor()->getDimensions());
+    for (const bool params_is_tensor : {true, false}) {
+      test->Reset();
+      if (params_is_tensor) {
+        test->AddTestTensor("params", ok_params[i].params_dims, 1,
+                            TfDataTypeToTrt(dtype));
+      } else {
+        test->AddTestWeights<CType>("params", ok_params[i].params_dims, params_input);
+      }
 
-    // Create input in CType and convert expected output to CType.
-    std::vector<CType> converted_expected_output(
-        ok_params[i].expected_output.begin(),
-        ok_params[i].expected_output.end());
+      test->AddTestTensor("indices", ok_params[i].indices_dims, 1,
+                          nvinfer1::DataType::kINT32);
+      test->AddTestWeights<int32>("axis", {1}, {ok_params[i].axis});
+      test->RunValidationAndConversion(node_def);
+      TRT_TensorOrWeights output;
+      TF_EXPECT_OK(test->GetTensorOrWeights("my_gather", &output));
+      ASSERT_TRUE(output.is_tensor());
+      ExpectTrtDimsEqualsArray(ok_params[i].expected_output_dims,
+                               output.tensor()->getDimensions());
 
-    const DataVec input_data{
-        {"params", test::AsTensor<CType>(params_input)},
-        {"indices", test::AsTensor<int32>(ok_params[i].indices)}};
-    DataVec output_data{
-        {"my_gather",
-         ConstructTensor<CType>(ok_params[i].expected_output.size())}};
-    test->BuildAndRun(input_data, &output_data);
-    EXPECT_THAT(GetSpanForData<CType>(output_data[0]),
-                ElementsAreArray(converted_expected_output));
+      // Create input in CType and convert expected output to CType.
+      std::vector<CType> converted_expected_output(
+          ok_params[i].expected_output.begin(),
+          ok_params[i].expected_output.end());
+
+      DataVec input_data;
+      if (params_is_tensor){
+          input_data = {
+              {"params", test::AsTensor<CType>(params_input)},
+              {"indices", test::AsTensor<int32>(ok_params[i].indices)}};
+      } else {
+          input_data = {
+              {"indices", test::AsTensor<int32>(ok_params[i].indices)}};
+      }
+      DataVec output_data{
+          {"my_gather",
+           ConstructTensor<CType>(ok_params[i].expected_output.size())}};
+      test->BuildAndRun(input_data, &output_data);
+      EXPECT_THAT(GetSpanForData<CType>(output_data[0]),
+                  ElementsAreArray(converted_expected_output));
+    }
   }
 }
 
